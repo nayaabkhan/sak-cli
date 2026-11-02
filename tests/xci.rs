@@ -2,8 +2,8 @@ mod common;
 
 use assert_cmd::Command;
 use common::{
-    HEADER_KEY, SECTION_KEY, TitleKind, TitleSpec, build_nsp, build_nsp_two_rights, master_index,
-    plain_titlekey, signed_ticket, test_keys_file,
+    HEADER_KEY, SECTION_KEY, TitleKind, TitleSpec, build_nsp, build_nsp_sharing,
+    build_nsp_two_rights, build_xci, master_index, plain_titlekey, signed_ticket, test_keys_file,
 };
 use predicates::prelude::*;
 use sak::container::{Entry, open_entries};
@@ -693,6 +693,90 @@ fn xci_size_matches_output() {
     assert_eq!(prepared.size(), size);
     w.merge("out.xci").assert().success();
     assert_eq!(fs::metadata(w.path("out.xci")).unwrap().len(), size);
+}
+
+#[test]
+fn xci_size_matches_output_for_several_titles() {
+    let w = Work::new();
+    let keys = w.keys();
+    build_nsp(
+        &w.path("in.nsp"),
+        &[
+            titlekey_base(),
+            spec(UPD, TitleKind::Patch, Some([0x34; 16])),
+            spec(DLC, TitleKind::AddOn, None),
+        ],
+    );
+    let plan = sak::select::build_plan(w.dir.path(), &w.path("out.xci"), &keys).unwrap();
+    let size = xci::size(&plan).unwrap();
+    w.merge("out.xci").assert().success();
+    assert_eq!(fs::metadata(w.path("out.xci")).unwrap().len(), size);
+}
+
+#[test]
+fn cart_xci_plus_update_nsp_merges_to_xci() {
+    let w = Work::new();
+    let keys = w.keys();
+    let update = [0x34; 16];
+    build_xci(
+        &w.path("cart.xci"),
+        &[spec(BASE, TitleKind::Application, None)],
+    );
+    build_nsp(
+        &w.path("update.nsp"),
+        &[spec(UPD, TitleKind::Patch, Some(update))],
+    );
+    w.merge("out.xci").assert().success();
+
+    let cart = open_entries(&w.path("cart.xci")).unwrap();
+    let upd_files = open_entries(&w.path("update.nsp")).unwrap();
+    let out = open_entries(&w.path("out.xci")).unwrap();
+    assert_eq!(out.len(), 4);
+    for src in &cart {
+        // Standard crypto already, so nothing in it changes.
+        assert_eq!(
+            read_entry(find(&out, &src.name)),
+            read_entry(src),
+            "{}",
+            src.name
+        );
+    }
+    let src = content_nca(&upd_files);
+    let plain = {
+        let mut p = UPD.to_le_bytes().to_vec();
+        p.extend_from_slice(&0x10000u32.to_le_bytes());
+        p.resize(0x200, 0xA1);
+        p
+    };
+    let key = plain_titlekey(&keys, update, GEN);
+    assert_nca_opens(&keys, find(&out, &src.name), MASTER, &key, &plain);
+}
+
+#[test]
+fn nca_listed_by_two_titles_appears_once_in_xci() {
+    let w = Work::new();
+    let keys = w.keys();
+    let base_path = w.path("base.nsp");
+    build_nsp(&base_path, &[titlekey_base()]);
+    let source = open_entries(&base_path).unwrap();
+    let shared = content_nca(&source).clone();
+    let bytes = read_entry(&shared);
+    build_nsp_sharing(
+        &w.path("dlc.nsp"),
+        &spec(DLC, TitleKind::AddOn, Some(RIGHTS)),
+        (shared.name.clone(), bytes),
+    );
+    w.merge("out.xci").assert().success();
+
+    let out = open_entries(&w.path("out.xci")).unwrap();
+    assert_eq!(out.iter().filter(|e| e.name == shared.name).count(), 1);
+    // base content and meta, DLC content and meta
+    assert_eq!(out.len(), 4);
+    let mut plain = BASE.to_le_bytes().to_vec();
+    plain.extend_from_slice(&0x10000u32.to_le_bytes());
+    plain.resize(0x200, 0xA1);
+    let key = plain_titlekey(&keys, RIGHTS, GEN);
+    assert_nca_opens(&keys, find(&out, &shared.name), MASTER, &key, &plain);
 }
 
 #[test]

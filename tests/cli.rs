@@ -335,6 +335,23 @@ fn common_ticket_gives_no_warning() {
 }
 
 #[test]
+fn output_length_matches_nsp_size() {
+    let w = Work::new();
+    let mut b = base();
+    b.rights_id = Some([0xAB; 16]);
+    let mut u = upd(0x10000);
+    u.delta = true;
+    build_nsp(&w.path("a.nsp"), &[b, u]);
+    let keys = sak::keys::Keys::load(&test_keys_file(w.keys.path())).unwrap();
+    let plan = sak::select::build_plan(w.dir.path(), &w.path("out.nsp"), &keys).unwrap();
+    w.merge("out.nsp").assert().success();
+    assert_eq!(
+        fs::metadata(w.path("out.nsp")).unwrap().len(),
+        sak::nsp::size(&plan)
+    );
+}
+
+#[test]
 fn missing_output_folder_is_error_naming_path() {
     let w = Work::new();
     build_nsp(&w.path("a.nsp"), &[base()]);
