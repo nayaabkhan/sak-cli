@@ -79,6 +79,9 @@ pub fn run_merge(args: &MergeArgs) -> Result<()> {
             prepared.write(f, progress)
         })
     } else {
+        for warning in nsp::personal_ticket_warnings(&plan)? {
+            println!("warning: {warning}");
+        }
         write_output(args, nsp::size(&plan), |f, progress| {
             nsp::write(&plan, f, progress)
         })

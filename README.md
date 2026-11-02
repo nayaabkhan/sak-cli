@@ -41,19 +41,22 @@ output, and the console or emulator applies it as usual.
 ### `.nsp` output
 
 Every selected NCA is copied byte for byte, with each title's tickets and
-certs. Keys are only used to read the content metadata.
+certs. Keys are only used to read the content metadata. A personalised ticket
+is copied unchanged too, with a warning naming the title, and only works on the
+console it was issued to.
 
 ### `.xci` output
 
 An XCI cannot carry tickets, so titlekey-encrypted NCAs are converted to
-standard crypto. The XCI header signature cannot be genuine, so it is random
+standard crypto. This needs a common ticket: sak stops with an error on a
+personalised one. The XCI header signature cannot be genuine, so it is random
 bytes. The file runs only where the loader or emulator ignores that signature.
 sak prints this warning on every `.xci` run.
 
 ## Not supported
 
 - `.nsz` and `.xcz` input or output (sak stops with a "not supported yet" error)
-- Personalised tickets
+- Personalised tickets in `.xci` output
 - Several games in one run, or subfolders
 - FAT32 file splitting, title databases, renaming, firmware or keygen patching
 - Windows

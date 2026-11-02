@@ -301,6 +301,40 @@ fn missing_ticket_is_error_naming_rights_id() {
 }
 
 #[test]
+fn personalised_ticket_in_nsp_output_warns_naming_title() {
+    let w = Work::new();
+    let mut b = base();
+    b.rights_id = Some([0xAB; 16]);
+    build_nsp(&w.path("a.nsp"), &[b]);
+    common::repack_nsp(&w.path("a.nsp"), |name, data| {
+        if name.ends_with(".tik") {
+            data[common::TICKET_KEY_TYPE] = 1;
+        }
+    });
+    w.merge("out.nsp").assert().success().stdout(
+        predicate::str::contains("warning: base game 0100000000000000 version 0")
+            .and(predicate::str::contains("personalised")),
+    );
+    let tik = |p: &Path| {
+        let es = open_entries(p).unwrap();
+        read_entry(es.iter().find(|e| e.name.ends_with(".tik")).unwrap())
+    };
+    assert_eq!(tik(&w.path("out.nsp")), tik(&w.path("a.nsp")));
+}
+
+#[test]
+fn common_ticket_gives_no_warning() {
+    let w = Work::new();
+    let mut b = base();
+    b.rights_id = Some([0xAB; 16]);
+    build_nsp(&w.path("a.nsp"), &[b]);
+    w.merge("out.nsp")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("warning").not());
+}
+
+#[test]
 fn missing_output_folder_is_error_naming_path() {
     let w = Work::new();
     build_nsp(&w.path("a.nsp"), &[base()]);

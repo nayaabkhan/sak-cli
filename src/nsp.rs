@@ -1,7 +1,8 @@
 //! Write the merged plan as an NSP (a PFS0 container).
 
 use crate::container::{Entry, pfs0_header};
-use crate::select::MergePlan;
+use crate::nca::Ticket;
+use crate::select::{MergePlan, describe};
 use anyhow::{Context, Result, bail};
 use indicatif::ProgressBar;
 use std::fs::File;
@@ -18,6 +19,23 @@ fn header(entries: &[&Entry]) -> Vec<u8> {
 pub fn size(plan: &MergePlan) -> u64 {
     let entries = plan.output_entries();
     header(&entries).len() as u64 + entries.iter().map(|e| e.size).sum::<u64>()
+}
+
+/// A warning for each title with a personalised ticket, which NSP output keeps as it is.
+pub fn personal_ticket_warnings(plan: &MergePlan) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    for title in &plan.titles {
+        for ticket in &title.tickets {
+            if Ticket::read(ticket)?.is_personalised() {
+                warnings.push(format!(
+                    "{} has a personalised ticket ({}); it is copied unchanged and only works on the console it was issued to",
+                    describe(&title.cnmt),
+                    ticket.name
+                ));
+            }
+        }
+    }
+    Ok(warnings)
 }
 
 /// Copy `e` to `out` through a 1 MiB buffer, advancing `progress` as bytes go.
