@@ -280,8 +280,8 @@ pub fn build_xci(path: &Path, specs: &[TitleSpec]) {
     let mut out = vec![0u8; 0xF000];
     out[0x100..0x104].copy_from_slice(b"HEAD");
     out[0x104..0x108].copy_from_slice(&0x1000u32.to_le_bytes());
-    out[0x138..0x140].copy_from_slice(&0xF000u64.to_le_bytes());
-    out[0x140..0x148].copy_from_slice(&(root.len() as u64).to_le_bytes());
+    out[0x130..0x138].copy_from_slice(&0xF000u64.to_le_bytes());
+    out[0x138..0x140].copy_from_slice(&(root.len() as u64).to_le_bytes());
     out.extend_from_slice(&root);
     std::fs::write(path, out).unwrap();
 }

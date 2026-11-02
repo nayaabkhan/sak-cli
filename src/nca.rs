@@ -73,15 +73,15 @@ pub fn titlekey_from_ticket(ticket: &Entry, master_index: u8, keys: &Keys) -> Re
     inner().with_context(|| format!("{}: {}", ticket.source.display(), ticket.name))
 }
 
-/// The header as standard crypto gamecard content, re-encrypted: gamecard flag set, rights ID
-/// cleared and, for a titlekey NCA, the titlekey in all four key area slots.
+/// The header as standard crypto, re-encrypted: rights ID cleared and, for a titlekey NCA, the
+/// titlekey in all four key area slots. The distribution byte at 0x204 keeps its source value,
+/// as upstream does, so a header with no rights ID comes out byte-identical to the source.
 pub fn standard_header(
     header: &NcaHeader,
     titlekey: Option<&[u8; 16]>,
     keys: &Keys,
 ) -> Result<[u8; HEADER_SIZE]> {
     let mut out = *header.plain;
-    out[0x204] = 1;
     match titlekey {
         Some(key) => {
             let area = &mut out[0x300..0x340];

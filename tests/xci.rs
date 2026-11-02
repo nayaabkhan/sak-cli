@@ -4,7 +4,7 @@ use assert_cmd::Command;
 use common::{HEADER_KEY, TitleKind, TitleSpec, build_nsp, plain_titlekey, test_keys_file};
 use predicates::prelude::*;
 use sak::container::{Entry, open_entries};
-use sak::crypto::{ctr_apply, ecb_decrypt, xts_decrypt};
+use sak::crypto::{ctr_apply, ecb_decrypt, xts_decrypt, xts_encrypt};
 use sak::keys::Keys;
 use sak::nca::{NcaHeader, standard_header, titlekey_from_ticket};
 use sak::xci;
@@ -173,13 +173,15 @@ fn personal_ticket_writes_nothing() {
     assert!(!w.path("out.xci.part").exists());
 }
 
-/// Rewrite the titlekey content NCA of a fresh NSP; returns source entry and plain new header.
-fn rewritten(w: &Work) -> (Entry, Vec<u8>, Vec<u8>) {
+/// Rewrite the titlekey content NCA of a fresh NSP, whose distribution byte is `distribution`;
+/// returns source entry, new header and plain new header.
+fn rewritten_with(w: &Work, distribution: u8) -> (Entry, Vec<u8>, Vec<u8>) {
     let keys = w.keys();
     let p = w.path("in.nsp");
     build_nsp(&p, &[titlekey_base()]);
     let entries = open_entries(&p).unwrap();
     let nca = content_nca(&entries).clone();
+    set_distribution(&p, &nca, distribution);
     let header = NcaHeader::read(&nca, &keys).unwrap();
     let tk = plain_titlekey(&keys);
     let new = standard_header(&header, Some(&tk), &keys).unwrap();
@@ -188,13 +190,46 @@ fn rewritten(w: &Work) -> (Entry, Vec<u8>, Vec<u8>) {
     (nca, new.to_vec(), plain)
 }
 
+fn rewritten(w: &Work) -> (Entry, Vec<u8>, Vec<u8>) {
+    rewritten_with(w, 0)
+}
+
+/// Set the distribution byte at 0x204 of `e` in place, re-encrypting its header.
+fn set_distribution(path: &Path, e: &Entry, value: u8) {
+    let mut file = fs::read(path).unwrap();
+    let range = e.offset as usize..e.offset as usize + 0xC00;
+    xts_decrypt(&HEADER_KEY, &mut file[range.clone()], 0x200);
+    file[e.offset as usize + 0x204] = value;
+    xts_encrypt(&HEADER_KEY, &mut file[range], 0x200);
+    fs::write(path, file).unwrap();
+}
+
 #[test]
-fn standard_header_clears_rights_id_and_sets_gamecard() {
-    let w = Work::new();
-    let (_, _, plain) = rewritten(&w);
-    assert_eq!(&plain[0x200..0x204], b"NCA3");
-    assert_eq!(plain[0x204], 1);
-    assert_eq!(plain[0x230..0x240], [0u8; 16]);
+fn standard_header_clears_rights_id_and_keeps_distribution_byte() {
+    for value in [0, 1] {
+        let w = Work::new();
+        let (_, _, plain) = rewritten_with(&w, value);
+        assert_eq!(&plain[0x200..0x204], b"NCA3");
+        assert_eq!(plain[0x204], value);
+        assert_eq!(plain[0x230..0x240], [0u8; 16]);
+    }
+}
+
+#[test]
+fn plain_nca_header_is_unchanged() {
+    for value in [0, 1] {
+        let w = Work::new();
+        let keys = w.keys();
+        let p = w.path("in.nsp");
+        build_nsp(&p, &[spec(BASE, TitleKind::Application, None)]);
+        let entries = open_entries(&p).unwrap();
+        for e in entries.iter().filter(|e| e.name.ends_with(".nca")) {
+            set_distribution(&p, e, value);
+            let header = NcaHeader::read(e, &keys).unwrap();
+            let new = standard_header(&header, None, &keys).unwrap();
+            assert_eq!(new[..], read_entry(e)[..0xC00], "{}", e.name);
+        }
+    }
 }
 
 #[test]
@@ -204,7 +239,7 @@ fn standard_header_only_changes_expected_fields() {
     let (nca, _, plain) = rewritten(&w);
     let old = NcaHeader::read(&nca, &keys).unwrap();
     for (i, (new, old)) in plain.iter().zip(old.plain.iter()).enumerate() {
-        let changed = i == 0x204 || (0x230..0x240).contains(&i) || (0x300..0x340).contains(&i);
+        let changed = (0x230..0x240).contains(&i) || (0x300..0x340).contains(&i);
         if !changed {
             assert_eq!(new, old, "byte {i:#x}");
         }
@@ -241,7 +276,6 @@ fn standard_header_keeps_plain_nca_key_area() {
     let header = NcaHeader::read(find(&entries, ".cnmt.nca"), &keys).unwrap();
     let mut plain = standard_header(&header, None, &keys).unwrap();
     xts_decrypt(&HEADER_KEY, &mut plain, 0x200);
-    assert_eq!(plain[0x204], 1);
     assert_eq!(plain[0x300..0x340], header.plain[0x300..0x340]);
 }
 
@@ -260,7 +294,11 @@ fn standard_header_refuses_titlekey_nca_without_titlekey() {
 fn signature_sector_is_unchanged_by_standard_header() {
     let w = Work::new();
     let (nca, new, plain) = rewritten(&w);
-    assert_eq!(plain[0x204], 1, "the rewrite did change the header");
+    assert_eq!(
+        plain[0x230..0x240],
+        [0u8; 16],
+        "the rewrite did change the header"
+    );
     assert_eq!(new[..0x200], read_entry(&nca)[..0x200]);
 }
 
@@ -457,7 +495,7 @@ fn xci_output_reads_back_through_open_entries() {
         assert_eq!(old[..0x200], new[..0x200], "signature of {}", e.name);
         let header = NcaHeader::read(e, &keys).unwrap();
         assert_eq!(header.rights_id, [0; 16], "{}", e.name);
-        assert_eq!(header.plain[0x204], 1, "{}", e.name);
+        assert_eq!(header.plain[0x204], 0, "{}", e.name);
     }
 }
 
