@@ -98,8 +98,43 @@ fn subfolders_are_ignored() {
     build_nsp(&d.path().join("a.nsp"), &[base()]);
     fs::create_dir(d.path().join("sub")).unwrap();
     build_nsp(&d.path().join("sub").join("b.nsp"), &[upd(0x10000)]);
-    fs::create_dir(d.path().join("dir.nsp")).unwrap();
     assert_eq!(ids(&plan(d.path()).unwrap()), vec![BASE]);
+}
+
+#[test]
+fn appledouble_and_other_dotfiles_are_skipped() {
+    let d = tempfile::tempdir().unwrap();
+    build_nsp(&d.path().join("Game.nsp"), &[base()]);
+    fs::write(d.path().join("._Game.nsp"), b"Mac resource fork, not PFS0").unwrap();
+    fs::write(d.path().join("._Game.xci"), b"junk").unwrap();
+    fs::write(d.path().join("._Game.nsz"), b"junk").unwrap();
+    fs::write(d.path().join("._Game.ns0"), b"junk").unwrap();
+    fs::create_dir(d.path().join(".Trash.nsp")).unwrap();
+    assert_eq!(ids(&plan(d.path()).unwrap()), vec![BASE]);
+}
+
+#[test]
+fn split_files_are_not_supported() {
+    for name in ["Game.ns0", "Game.XC0"] {
+        let d = tempfile::tempdir().unwrap();
+        build_nsp(&d.path().join("a.nsp"), &[base()]);
+        fs::write(d.path().join(name), b"x").unwrap();
+        let e = err(d.path());
+        assert!(e.contains("split files are not supported"), "{e}");
+        assert!(e.contains(name), "{e}");
+    }
+}
+
+#[test]
+fn folder_named_like_an_input_is_a_split_file_error() {
+    for name in ["Game.nsp", "Game.XCI"] {
+        let d = tempfile::tempdir().unwrap();
+        build_nsp(&d.path().join("a.nsp"), &[base()]);
+        fs::create_dir(d.path().join(name)).unwrap();
+        let e = err(d.path());
+        assert!(e.contains("split files are not supported"), "{e}");
+        assert!(e.contains(name), "{e}");
+    }
 }
 
 #[test]

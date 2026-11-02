@@ -80,6 +80,11 @@ fn ext_lower(p: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+fn is_hidden(p: &Path) -> bool {
+    p.file_name()
+        .is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))
+}
+
 pub fn describe(c: &Cnmt) -> String {
     let what = match c.kind {
         TitleKind::Application => "base game",
@@ -100,20 +105,25 @@ fn scan_files(dir: &Path, output: &Path) -> Result<Vec<PathBuf>> {
         let path = ent
             .with_context(|| format!("cannot read folder {}", dir.display()))?
             .path();
-        if !std::fs::metadata(&path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-        {
+        // macOS writes `._Game.nsp` AppleDouble files beside the real ones on some disks.
+        if is_hidden(&path) || skip.contains(&canon(&path)) {
             continue;
         }
-        if skip.contains(&canon(&path)) {
-            continue;
+        let ext = ext_lower(&path);
+        match std::fs::metadata(&path) {
+            Ok(m) if m.is_file() => {}
+            // A split NSP or XCI is a folder of parts on FAT32 disks.
+            Ok(m) if m.is_dir() && matches!(ext.as_deref(), Some("nsp" | "xci")) => {
+                bail!("split files are not supported: {}", path.display())
+            }
+            _ => continue,
         }
-        match ext_lower(&path).as_deref() {
+        match ext.as_deref() {
             Some("nsp" | "xci") => files.push(path),
             Some("nsz" | "xcz") => {
                 bail!("compressed files are not supported yet: {}", path.display())
             }
+            Some("ns0" | "xc0") => bail!("split files are not supported: {}", path.display()),
             _ => {}
         }
     }
