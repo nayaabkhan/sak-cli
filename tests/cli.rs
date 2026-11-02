@@ -317,14 +317,18 @@ fn read_only_output_folder_is_error() {
     let ro = w.path("ro");
     fs::create_dir(&ro).unwrap();
     fs::set_permissions(&ro, fs::Permissions::from_mode(0o555)).unwrap();
-    // root ignores permissions; skip then
-    let can_write = fs::write(ro.join("probe"), b"x").is_ok();
-    if !can_write {
-        w.merge("ro/out.nsp")
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains("ro"));
-        assert_eq!(fs::read_dir(&ro).unwrap().count(), 0);
+    // root ignores permissions: probe for real, and skip visibly
+    if fs::write(ro.join("probe"), b"x").is_ok() {
+        eprintln!(
+            "SKIPPED read_only_output_folder_is_error: folder is writable (running as root?)"
+        );
+        fs::set_permissions(&ro, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
     }
+    w.merge("ro/out.nsp")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ro/out.nsp.part"));
+    assert_eq!(fs::read_dir(&ro).unwrap().count(), 0);
     fs::set_permissions(&ro, fs::Permissions::from_mode(0o755)).unwrap();
 }
