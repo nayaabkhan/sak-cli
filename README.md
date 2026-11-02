@@ -3,12 +3,14 @@
 A small command line tool for macOS and Linux that merges a Nintendo Switch
 game, its update and its DLC into one file.
 
-Status: early. It has not yet been tested against a real game, update and DLC.
-Treat the output as unproven until you have tried it on your own setup.
+Status: early. It has worked on one real game so far. Keep your original files
+until you have tried the output on your own setup.
 
 ## Install
 
-There is no published release yet. From a checkout:
+Download a build for your system from the
+[releases page](https://github.com/nayaabkhan/sak-cli/releases), or from a
+checkout:
 
     cargo install --path . --locked
 
