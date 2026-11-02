@@ -79,7 +79,9 @@ An XCI can't carry tickets, so this is much more than a different container.
 
 - Titlekey-encrypted NCAs must be converted to standard crypto: decrypt the
   titlekey from the ticket, write it into the NCA key area, clear the rights ID,
-  and re-encrypt the header (`append_clean_content`). The gamecard flag is set.
+  and re-encrypt the header (`append_clean_content`). The gamecard flag keeps its
+  source value, which matches upstream for eShop and cartridge inputs and leaves
+  NCAs without a rights ID byte-identical.
 - As upstream does, NCA file names and cnmt content records stay as they are,
   even though the whole-file hash of a rewritten NCA no longer matches them.
   Upstream's rename code is commented out and it only patches a cnmt for keygen
