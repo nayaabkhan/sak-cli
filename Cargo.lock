@@ -666,7 +666,6 @@ dependencies = [
  "aes",
  "anyhow",
  "assert_cmd",
- "cipher",
  "clap",
  "ctr",
  "dirs",

@@ -50,6 +50,7 @@ impl Keys {
         })
     }
 
+    /// `None` when the key is missing or is not `N` bytes long.
     fn get<const N: usize>(&self, name: &str) -> Option<[u8; N]> {
         self.map.get(name)?.as_slice().try_into().ok()
     }
@@ -96,7 +97,7 @@ impl Keys {
         })();
         derived.with_context(|| {
             format!(
-                "key {name} not found in {} and cannot be derived (needs master_key_{master_index:02x} and the key generation sources)",
+                "key {name} missing or wrong length in {} and cannot be derived (needs master_key_{master_index:02x} and the key generation sources)",
                 self.path.display()
             )
         })
@@ -115,7 +116,7 @@ impl Keys {
         })();
         derived.with_context(|| {
             format!(
-                "key {name} not found in {} and cannot be derived (needs master_key_{master_index:02x} and titlekek_source)",
+                "key {name} missing or wrong length in {} and cannot be derived (needs master_key_{master_index:02x} and titlekek_source)",
                 self.path.display()
             )
         })
@@ -217,6 +218,17 @@ mod tests {
         assert_eq!(keys.titlekek(2).unwrap(), expected);
         let err = keys.titlekek(3).unwrap_err().to_string();
         assert!(err.contains("titlekek_03"), "{err}");
+    }
+
+    #[test]
+    fn wrong_length_key_error_says_so() {
+        let f = write_keys(&format!("titlekek_01 = {}\n", hexs(&[1; 8])));
+        let keys = Keys::load(f.path()).unwrap();
+        let err = keys.titlekek(1).unwrap_err().to_string();
+        assert!(err.contains("titlekek_01"), "{err}");
+        assert!(err.contains("missing or wrong length"), "{err}");
+        let err = keys.key_area_key(1, 0).unwrap_err().to_string();
+        assert!(err.contains("missing or wrong length"), "{err}");
     }
 
     #[test]
