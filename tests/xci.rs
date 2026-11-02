@@ -231,6 +231,25 @@ fn personal_ticket_writes_nothing() {
     assert!(!w.path("out.xci.part").exists());
 }
 
+#[test]
+fn ticket_with_other_rights_id_inside_is_error() {
+    let w = Work::new();
+    let p = w.path("in.nsp");
+    build_nsp(&p, &[titlekey_base()]);
+    let entries = open_entries(&p).unwrap();
+    let tik = find(&entries, ".tik");
+    let mut bytes = fs::read(&p).unwrap();
+    bytes[tik.offset as usize + 0x2A0..tik.offset as usize + 0x2B0].fill(0x77);
+    fs::write(&p, bytes).unwrap();
+    w.merge("out.xci").assert().failure().stderr(
+        predicate::str::contains("77".repeat(16))
+            .and(predicate::str::contains("12".repeat(16)))
+            .and(predicate::str::contains("in.nsp")),
+    );
+    assert!(!w.path("out.xci").exists());
+    assert!(!w.path("out.xci.part").exists());
+}
+
 /// Rewrite the titlekey content NCA of a fresh NSP, whose distribution byte is `distribution`;
 /// returns source entry, new header and plain new header.
 fn rewritten_with(w: &Work, distribution: u8) -> (Entry, Vec<u8>, Vec<u8>) {

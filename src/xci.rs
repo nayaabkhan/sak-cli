@@ -4,7 +4,9 @@
 use crate::container::{Entry, HfsFile, hfs0_header};
 use crate::crypto::cbc_encrypt;
 use crate::keys::Keys;
-use crate::nca::{HEADER_SIZE, NcaHeader, read_range, standard_header, titlekey_from_ticket};
+use crate::nca::{
+    HEADER_SIZE, NcaHeader, Ticket, read_range, standard_header, titlekey_from_ticket,
+};
 use crate::nsp::copy_entry;
 use crate::select::MergePlan;
 use anyhow::{Context, Result, anyhow, bail};
@@ -197,12 +199,25 @@ fn nca_entries(plan: &MergePlan) -> Result<Vec<&Entry>> {
 /// The ticket for `rights_id` among those of the titles holding `nca`.
 fn find_ticket<'a>(plan: &'a MergePlan, nca: &Entry, rights_id: &[u8; 16]) -> Result<&'a Entry> {
     let rid = hex::encode(rights_id);
-    plan.titles
+    let ticket = plan
+        .titles
         .iter()
         .filter(|t| t.meta == *nca || t.ncas.contains(nca))
         .flat_map(|t| &t.tickets)
         .find(|e| e.name.to_ascii_lowercase().starts_with(&rid))
-        .ok_or_else(|| anyhow!("no ticket for rights ID {rid} needed by {}", nca.name))
+        .ok_or_else(|| anyhow!("no ticket for rights ID {rid} needed by {}", nca.name))?;
+    // The name only suggests a match; a wrong titlekey would write an unreadable NCA.
+    let inside = Ticket::read(ticket)?.rights_id;
+    if inside != *rights_id {
+        bail!(
+            "{}: {} holds rights ID {}, not the {rid} needed by {}",
+            ticket.source.display(),
+            ticket.name,
+            hex::encode(inside),
+            nca.name
+        );
+    }
+    Ok(ticket)
 }
 
 /// Total size in bytes of the XCI for `plan`.
