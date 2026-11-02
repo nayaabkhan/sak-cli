@@ -186,7 +186,9 @@ fn read_table(
             .iter()
             .position(|&b| b == 0)
             .ok_or_else(|| anyhow!("unterminated entry name"))?;
-        let name = String::from_utf8_lossy(&bytes[..end]).into_owned();
+        let name = std::str::from_utf8(&bytes[..end])
+            .map_err(|_| anyhow!("corrupt file table: entry name is not valid UTF-8"))?
+            .to_owned();
         let offset = data_start
             .checked_add(rel)
             .filter(|o| o.checked_add(size).is_some_and(|end| end <= file_len))

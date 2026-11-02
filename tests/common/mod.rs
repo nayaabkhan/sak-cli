@@ -208,13 +208,11 @@ fn concat(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-fn load_keys(path: &Path) -> Keys {
-    let dir = path.parent().unwrap();
-    let kp = test_keys_file(dir);
-    // keep the keys file out of the way of tests listing the folder
-    let keys = Keys::load(&kp).unwrap();
-    std::fs::remove_file(kp).unwrap();
-    keys
+fn load_keys(_path: &Path) -> Keys {
+    // private temp dir, so the caller's folder is never touched
+    let tmp = tempfile::tempdir().unwrap();
+    let kp = test_keys_file(tmp.path());
+    Keys::load(&kp).unwrap()
 }
 
 pub fn build_nsp(path: &Path, specs: &[TitleSpec]) {

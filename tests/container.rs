@@ -206,3 +206,30 @@ fn fixture_meta_nca_has_decryptable_header_and_pfs0_section() {
     sak::crypto::ctr_apply(&common::SECTION_KEY, ctr_high, 0xC00, &mut section);
     assert_eq!(&section[0x200..0x204], b"PFS0");
 }
+
+#[test]
+fn non_utf8_entry_name_is_error_naming_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("badname.nsp");
+    let mut h = pfs0_header(&[("abc".into(), 0)]);
+    h[0x28] = 0xff;
+    fs::write(&path, &h).unwrap();
+    let err = open_entries(&path).unwrap_err();
+    assert!(format!("{err:#}").contains("badname.nsp"), "{err:#}");
+}
+
+#[test]
+fn build_nsp_leaves_keys_file_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = common::test_keys_file(dir.path());
+    let before = fs::read(&keys).unwrap();
+    build_nsp(
+        &dir.path().join("a.nsp"),
+        &[spec(0x0100_0000_0000_1000, TitleKind::Application)],
+    );
+    build_xci(
+        &dir.path().join("a.xci"),
+        &[spec(0x0100_0000_0000_1000, TitleKind::Application)],
+    );
+    assert_eq!(fs::read(&keys).unwrap(), before);
+}
