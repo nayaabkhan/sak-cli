@@ -29,6 +29,29 @@ pub struct MergePlan {
     pub skipped: Vec<String>,
 }
 
+impl MergePlan {
+    /// Files to write, in order: for each title its NCAs, meta NCA, tickets, certs.
+    /// Titles may share a ticket or cert; each name appears once, first one kept.
+    pub fn output_entries(&self) -> Vec<&Entry> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for t in &self.titles {
+            let all = t
+                .ncas
+                .iter()
+                .chain(std::iter::once(&t.meta))
+                .chain(&t.tickets)
+                .chain(&t.certs);
+            for e in all {
+                if seen.insert(e.name.as_str()) {
+                    out.push(e);
+                }
+            }
+        }
+        out
+    }
+}
+
 const DELTA_FRAGMENT: u8 = 6;
 
 struct Candidate {
@@ -57,7 +80,7 @@ fn ext_lower(p: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-fn describe(c: &Cnmt) -> String {
+pub fn describe(c: &Cnmt) -> String {
     let what = match c.kind {
         TitleKind::Application => "base game",
         TitleKind::Patch => "update",
@@ -240,6 +263,13 @@ fn finish(cand: Candidate, keys: &Keys) -> Result<Title> {
         let header = NcaHeader::read(nca, keys)?;
         if header.rights_id != [0u8; 16] {
             let rid = hex::encode(header.rights_id);
+            if find_entry(&cand.entries, &format!("{rid}.tik")).is_none() {
+                bail!(
+                    "{} needs a ticket for rights ID {rid} but none is in {}",
+                    describe(&cand.cnmt),
+                    cand.file.display()
+                );
+            }
             for (ext, list) in [("tik", &mut tickets), ("cert", &mut certs)] {
                 if let Some(e) = find_entry(&cand.entries, &format!("{rid}.{ext}"))
                     && !list.contains(e)
