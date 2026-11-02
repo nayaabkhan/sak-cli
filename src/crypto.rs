@@ -1,4 +1,5 @@
-//! AES helpers: ECB for key unwrapping, XTS for NCA headers, CTR for NCA sections.
+//! AES helpers: ECB for key unwrapping, XTS for NCA headers, CTR for NCA sections, CBC for
+//! the XCI game info.
 
 use aes::cipher::{
     Array, BlockCipherDecrypt, BlockCipherEncrypt, KeyInit, KeyIvInit, StreamCipher,
@@ -28,6 +29,22 @@ pub fn ecb_decrypt(key: &[u8; 16], data: &mut [u8]) {
     let cipher = Aes128::new(&Array::from(*key));
     for chunk in data.chunks_exact_mut(16) {
         cipher.decrypt_block(<&mut Block>::try_from(chunk).unwrap());
+    }
+}
+
+/// AES-128-CBC encrypt in place. `data` length must be a multiple of 16.
+pub fn cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], data: &mut [u8]) {
+    assert!(
+        data.len().is_multiple_of(16),
+        "CBC data must be a multiple of 16 bytes"
+    );
+    let mut prev = *iv;
+    for chunk in data.chunks_exact_mut(16) {
+        for (b, p) in chunk.iter_mut().zip(prev) {
+            *b ^= p;
+        }
+        ecb_encrypt(key, chunk);
+        prev.copy_from_slice(chunk);
     }
 }
 
@@ -83,6 +100,23 @@ mod tests {
         assert_eq!(buf, expected);
         ecb_decrypt(&key, &mut buf);
         assert_eq!(buf, plain);
+    }
+
+    #[test]
+    fn cbc_matches_sp800_38a_vector() {
+        let key: [u8; 16] = hex::decode("2b7e151628aed2a6abf7158809cf4f3c")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let iv: [u8; 16] = core::array::from_fn(|i| i as u8);
+        let mut data =
+            hex::decode("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51")
+                .unwrap();
+        cbc_encrypt(&key, &iv, &mut data);
+        assert_eq!(
+            hex::encode(data),
+            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2"
+        );
     }
 
     #[test]

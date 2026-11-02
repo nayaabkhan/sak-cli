@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use sak::container::{HfsFile, hfs0_header, pfs0_header};
-use sak::crypto::{ctr_apply, ecb_encrypt, xts_encrypt};
+use sak::crypto::{ctr_apply, ecb_decrypt, ecb_encrypt, xts_encrypt};
 use sak::keys::Keys;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -33,6 +33,16 @@ pub const KAEK_APP_SOURCE: [u8; 16] = seq(0x54);
 pub const TITLEKEK_SOURCE: [u8; 16] = seq(0x65);
 /// Section CTR key placed (encrypted) in key area slot 2 of every fixture NCA.
 pub const SECTION_KEY: [u8; 16] = seq(0x76);
+
+/// Encrypted titlekey every fixture ticket carries.
+pub const TICKET_TITLEKEY: [u8; 16] = [0x5a; 16];
+
+/// Decrypted titlekey matching `TICKET_TITLEKEY`, using the titlekek for master index 0.
+pub fn plain_titlekey(keys: &Keys) -> [u8; 16] {
+    let mut k = TICKET_TITLEKEY;
+    ecb_decrypt(&keys.titlekek(0).unwrap(), &mut k);
+    k
+}
 
 pub fn test_keys_file(dir: &Path) -> PathBuf {
     let path = dir.join("prod.keys");
@@ -83,7 +93,8 @@ fn sha(data: &[u8]) -> [u8; 32] {
 }
 
 /// Build an encrypted NCA: XTS header plus one CTR section holding `section`
-/// (a PFS0 at section offset 0x200 when `pfs0` is true).
+/// (a PFS0 at section offset 0x200 when `pfs0` is true). With a rights ID the section uses
+/// the ticket's titlekey, as a real titlekey NCA does; otherwise `SECTION_KEY`.
 fn build_nca(
     keys: &Keys,
     title_id: u64,
@@ -121,7 +132,11 @@ fn build_nca(
 
     let mut ctr_high = ctr_raw;
     ctr_high.reverse();
-    ctr_apply(&SECTION_KEY, ctr_high, 0xC00, &mut body);
+    let section_key = match rights_id {
+        Some(_) => plain_titlekey(keys),
+        None => SECTION_KEY,
+    };
+    ctr_apply(&section_key, ctr_high, 0xC00, &mut body);
     xts_encrypt(&HEADER_KEY, &mut h, 0x200);
     h.extend_from_slice(&body);
     h
@@ -156,7 +171,7 @@ fn build_cnmt(spec: &TitleSpec, records: &[([u8; 32], [u8; 16], u64, u8)]) -> Ve
 fn build_ticket(rights_id: [u8; 16]) -> Vec<u8> {
     let mut t = vec![0u8; 0x2C0];
     t[0x141] = 0;
-    t[0x180..0x190].copy_from_slice(&[0x5a; 16]);
+    t[0x180..0x190].copy_from_slice(&TICKET_TITLEKEY);
     t[0x2A0..0x2B0].copy_from_slice(&rights_id);
     t
 }

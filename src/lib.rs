@@ -5,6 +5,7 @@ pub mod keys;
 pub mod nca;
 pub mod nsp;
 pub mod select;
+pub mod xci;
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
@@ -69,17 +70,32 @@ pub fn run_merge(args: &MergeArgs) -> Result<()> {
     }
 
     if ext.as_deref() == Some("xci") {
-        bail!("XCI output is not supported yet");
+        println!(
+            "warning: an XCI header signature cannot be genuine; this file only runs where the loader or emulator ignores the signature"
+        );
+        // Before write_atomic, so a bad ticket writes nothing.
+        let prepared = xci::prepare(&plan, &keys)?;
+        write_output(args, prepared.size(), |f, progress| {
+            prepared.write(f, progress)
+        })
+    } else {
+        write_output(args, nsp::size(&plan), |f, progress| {
+            nsp::write(&plan, f, progress)
+        })
     }
-    let size = nsp::size(&plan);
+}
+
+fn write_output(
+    args: &MergeArgs,
+    size: u64,
+    write: impl FnOnce(&mut File, &ProgressBar) -> Result<()>,
+) -> Result<()> {
     let progress = ProgressBar::with_draw_target(Some(size), ProgressDrawTarget::stderr());
     progress.set_style(
         ProgressStyle::with_template("{bar:40} {bytes}/{total_bytes} ({eta})")
             .unwrap_or_else(|_| ProgressStyle::default_bar()),
     );
-    let result = write_atomic(&args.output, args.force, size, |f| {
-        nsp::write(&plan, f, &progress)
-    });
+    let result = write_atomic(&args.output, args.force, size, |f| write(f, &progress));
     progress.finish_and_clear();
     result?;
     println!("Wrote {}", args.output.display());
