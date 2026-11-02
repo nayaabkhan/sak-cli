@@ -1,0 +1,6 @@
+/target
+*.part
+*.keys
+*.nsp
+*.xci
+.superpowers/
