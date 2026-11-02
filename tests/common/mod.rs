@@ -163,20 +163,33 @@ fn build_ticket(rights_id: [u8; 16]) -> Vec<u8> {
 
 /// Files (name, bytes) a title contributes to an NSP or the secure partition.
 pub fn title_files(keys: &Keys, spec: &TitleSpec) -> Vec<(String, Vec<u8>)> {
+    title_files_with(keys, spec, None)
+}
+
+/// Like `title_files`, plus a second content NCA under the rights ID `extra`.
+pub fn title_files_with(
+    keys: &Keys,
+    spec: &TitleSpec,
+    extra: Option<[u8; 16]>,
+) -> Vec<(String, Vec<u8>)> {
     let mut files = Vec::new();
     let mut records = Vec::new();
-    let mut add_content = |files: &mut Vec<(String, Vec<u8>)>, ty: u8, salt: u8| {
-        let mut payload = vec![salt; 0x200];
-        payload[..8].copy_from_slice(&spec.title_id.to_le_bytes());
-        payload[8..12].copy_from_slice(&spec.version.to_le_bytes());
-        let nca = build_nca(keys, spec.title_id, false, spec.rights_id, &payload, false);
-        let id = nca_id(&nca);
-        records.push((sha(&nca), id, nca.len() as u64, ty));
-        files.push((format!("{}.nca", hex::encode(id)), nca));
-    };
-    add_content(&mut files, 1, 0xA1);
+    let mut add_content =
+        |files: &mut Vec<(String, Vec<u8>)>, ty: u8, salt: u8, rights: Option<[u8; 16]>| {
+            let mut payload = vec![salt; 0x200];
+            payload[..8].copy_from_slice(&spec.title_id.to_le_bytes());
+            payload[8..12].copy_from_slice(&spec.version.to_le_bytes());
+            let nca = build_nca(keys, spec.title_id, false, rights, &payload, false);
+            let id = nca_id(&nca);
+            records.push((sha(&nca), id, nca.len() as u64, ty));
+            files.push((format!("{}.nca", hex::encode(id)), nca));
+        };
+    add_content(&mut files, 1, 0xA1, spec.rights_id);
     if spec.delta {
-        add_content(&mut files, 6, 0xD7);
+        add_content(&mut files, 6, 0xD7, spec.rights_id);
+    }
+    if extra.is_some() {
+        add_content(&mut files, 3, 0xB2, extra);
     }
     let cnmt = build_cnmt(spec, &records);
     let cnmt_name = format!("{:?}_{:016x}.cnmt", spec.kind, spec.title_id);
@@ -184,8 +197,9 @@ pub fn title_files(keys: &Keys, spec: &TitleSpec) -> Vec<(String, Vec<u8>)> {
     pfs.extend_from_slice(&cnmt);
     let meta = build_nca(keys, spec.title_id, true, None, &pfs, true);
     files.push((format!("{}.cnmt.nca", hex::encode(nca_id(&meta))), meta));
-    if let Some(r) = spec.rights_id {
+    for r in spec.rights_id.into_iter().chain(extra) {
         files.push((format!("{}.tik", hex::encode(r)), build_ticket(r)));
+        files.push((format!("{}.cert", hex::encode(r)), vec![0xCE; 0x40]));
     }
     files
 }
@@ -207,6 +221,12 @@ fn load_keys(_path: &Path) -> Keys {
     let tmp = tempfile::tempdir().unwrap();
     let kp = test_keys_file(tmp.path());
     Keys::load(&kp).unwrap()
+}
+
+/// NSP holding one title whose content uses two rights IDs.
+pub fn build_nsp_two_rights(path: &Path, spec: &TitleSpec, extra: [u8; 16]) {
+    let keys = load_keys(path);
+    std::fs::write(path, concat(&title_files_with(&keys, spec, Some(extra)))).unwrap();
 }
 
 pub fn build_nsp(path: &Path, specs: &[TitleSpec]) {

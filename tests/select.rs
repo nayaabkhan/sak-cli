@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TitleKind, TitleSpec, build_nsp, build_xci, test_keys_file};
+use common::{TitleKind, TitleSpec, build_nsp, build_nsp_two_rights, build_xci, test_keys_file};
 use sak::keys::Keys;
 use sak::select::{MergePlan, build_plan};
 use std::fs;
@@ -243,4 +243,66 @@ fn tickets_are_matched_by_rights_id() {
         format!("{}.tik", "ab".repeat(16))
     );
     assert!(p.titles[1].tickets.is_empty());
+}
+
+#[test]
+fn certs_are_attached_with_tickets() {
+    let d = tempfile::tempdir().unwrap();
+    let mut b = base();
+    b.rights_id = Some([0xAB; 16]);
+    build_nsp(&d.path().join("a.nsp"), &[b]);
+    let t = &plan(d.path()).unwrap().titles[0];
+    assert_eq!(t.tickets.len(), 1);
+    assert_eq!(t.certs.len(), 1);
+    assert_eq!(t.certs[0].name, format!("{}.cert", "ab".repeat(16)));
+}
+
+#[test]
+fn two_rights_ids_give_both_tickets_and_certs() {
+    let d = tempfile::tempdir().unwrap();
+    let mut b = base();
+    b.rights_id = Some([0xAB; 16]);
+    build_nsp_two_rights(&d.path().join("a.nsp"), &b, [0xCD; 16]);
+    let t = &plan(d.path()).unwrap().titles[0];
+    let mut names: Vec<_> = t.tickets.iter().map(|e| e.name.clone()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            format!("{}.tik", "ab".repeat(16)),
+            format!("{}.tik", "cd".repeat(16))
+        ]
+    );
+    assert_eq!(t.certs.len(), 2);
+}
+
+#[test]
+fn titles_sharing_a_rights_id_each_list_the_ticket() {
+    let d = tempfile::tempdir().unwrap();
+    let mut b = base();
+    b.rights_id = Some([0xAB; 16]);
+    let mut u = upd(0x10000);
+    u.rights_id = Some([0xAB; 16]);
+    build_nsp(&d.path().join("a.nsp"), &[b, u]);
+    let p = plan(d.path()).unwrap();
+    for t in &p.titles {
+        assert_eq!(t.tickets.len(), 1, "{:?}", t.cnmt.title_id);
+        assert_eq!(t.certs.len(), 1);
+    }
+}
+
+#[test]
+fn corrupt_nca_in_any_input_stops_merge_naming_file() {
+    let d = tempfile::tempdir().unwrap();
+    build_nsp(&d.path().join("a.nsp"), &[base(), upd(0x20000)]);
+    let bad = d.path().join("old_update.nsp");
+    build_nsp(&bad, &[upd(0x10000)]);
+    // corrupt the first entry's header (the content NCA) so it no longer decrypts
+    let mut raw = fs::read(&bad).unwrap();
+    let off = sak::container::open_entries(&bad).unwrap()[0].offset as usize;
+    raw[off..off + 0xC00].fill(0x11);
+    fs::write(&bad, raw).unwrap();
+    let e = err(d.path());
+    assert!(e.contains("old_update.nsp"), "{e}");
+    assert!(!e.contains('\n'), "{e}");
 }

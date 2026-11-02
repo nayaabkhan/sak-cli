@@ -108,6 +108,9 @@ pub fn build_plan(dir: &Path, output: &Path, keys: &Keys) -> Result<MergePlan> {
     let mut chosen: BTreeMap<u64, Candidate> = BTreeMap::new();
     let mut skipped = Vec::new();
     for file in &files {
+        // Strict on purpose: an unreadable NCA or cnmt in any input stops the merge, so a
+        // corrupt newest update can never be silently dropped. The errors already name
+        // the file and entry.
         let entries = open_entries(file)?;
         for e in entries
             .iter()
