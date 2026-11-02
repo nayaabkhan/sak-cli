@@ -224,7 +224,9 @@ fn write_atomic_removes_part_when_writer_fails() {
         f.write_all(b"abc")?;
         anyhow::bail!("boom")
     });
-    assert!(r.is_err());
+    let msg = format!("{:#}", r.unwrap_err());
+    assert!(msg.contains("o.nsp.part"), "{msg}");
+    assert!(msg.contains("boom"), "{msg}");
     assert!(!out.exists());
     assert!(!d.path().join("o.nsp.part").exists());
 }

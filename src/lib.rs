@@ -153,6 +153,7 @@ pub fn write_atomic(
     let mut file =
         File::create(&part).with_context(|| format!("cannot create {}", part.display()))?;
     let result = f(&mut file)
+        .with_context(|| format!("cannot write {}", part.display()))
         .and_then(|()| {
             file.sync_all()
                 .with_context(|| format!("cannot write {}", part.display()))
