@@ -1,7 +1,9 @@
 mod common;
 
 use assert_cmd::Command;
-use common::{HEADER_KEY, TitleKind, TitleSpec, build_nsp, plain_titlekey, test_keys_file};
+use common::{
+    HEADER_KEY, TitleKind, TitleSpec, build_nsp, plain_titlekey, signed_ticket, test_keys_file,
+};
 use predicates::prelude::*;
 use sak::container::{Entry, open_entries};
 use sak::crypto::{ctr_apply, ecb_decrypt, xts_decrypt, xts_encrypt};
@@ -137,11 +139,67 @@ fn titlekey_decrypts_with_titlekek() {
     assert_eq!(key, plain_titlekey(&keys));
 }
 
+/// Each signature type, in upstream's `TicketSignature`, with the offset of the ticket body.
+const SIGNATURES: [(u32, usize); 6] = [
+    (0x10000, 0x240),
+    (0x10001, 0x140),
+    (0x10002, 0x80),
+    (0x10003, 0x240),
+    (0x10004, 0x140),
+    (0x10005, 0x80),
+];
+
+/// `bytes` as a one-file entry on disk.
+fn ticket_entry(w: &Work, bytes: &[u8]) -> Entry {
+    let path = w.path("t.tik");
+    fs::write(&path, bytes).unwrap();
+    Entry {
+        source: path,
+        name: "t.tik".into(),
+        offset: 0,
+        size: bytes.len() as u64,
+    }
+}
+
+#[test]
+fn ticket_fields_are_read_relative_to_signature_size() {
+    let w = Work::new();
+    let keys = w.keys();
+    for (signature, body) in SIGNATURES {
+        let ticket = ticket_entry(&w, &signed_ticket(signature, body, RIGHTS, 0));
+        let key = titlekey_from_ticket(&ticket, 0, &keys).unwrap();
+        assert_eq!(key, plain_titlekey(&keys), "{signature:#x}");
+        let personal = ticket_entry(&w, &signed_ticket(signature, body, RIGHTS, 1));
+        let err = titlekey_from_ticket(&personal, 0, &keys).unwrap_err();
+        assert!(format!("{err:#}").contains("personal"), "{signature:#x}");
+    }
+}
+
+#[test]
+fn unknown_ticket_signature_type_is_error_naming_file() {
+    let w = Work::new();
+    let keys = w.keys();
+    let ticket = ticket_entry(&w, &signed_ticket(0x20004, 0x140, RIGHTS, 0));
+    let msg = format!("{:#}", titlekey_from_ticket(&ticket, 0, &keys).unwrap_err());
+    assert!(msg.contains("t.tik"), "{msg}");
+    assert!(msg.contains("signature type"), "{msg}");
+}
+
+#[test]
+fn truncated_ticket_is_error_naming_file() {
+    let w = Work::new();
+    let keys = w.keys();
+    let whole = signed_ticket(0x10004, 0x140, RIGHTS, 0);
+    let ticket = ticket_entry(&w, &whole[..0x200]);
+    let msg = format!("{:#}", titlekey_from_ticket(&ticket, 0, &keys).unwrap_err());
+    assert!(msg.contains("t.tik"), "{msg}");
+}
+
 fn make_personal(path: &Path) {
     let entries = open_entries(path).unwrap();
     let tik = find(&entries, ".tik");
     let mut bytes = fs::read(path).unwrap();
-    bytes[tik.offset as usize + 0x141] = 1;
+    bytes[tik.offset as usize + common::TICKET_KEY_TYPE] = 1;
     fs::write(path, bytes).unwrap();
 }
 

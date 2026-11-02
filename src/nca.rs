@@ -56,17 +56,63 @@ impl NcaHeader {
     }
 }
 
+/// The fields of a ticket that matter here. A ticket starts with a u32 signature type, then
+/// the signature and padding; everything else sits at a fixed offset from the end of those.
+pub struct Ticket {
+    pub rights_id: [u8; 16],
+    pub key_type: u8,
+    titlekey: [u8; 16],
+}
+
+/// Size of the signature type, signature and padding, as in upstream's `Fs/Ticket.py`.
+fn ticket_body_offset(signature_type: u32) -> Result<u64> {
+    Ok(match signature_type {
+        0x10000 | 0x10003 => 0x240, // RSA-4096
+        0x10001 | 0x10004 => 0x140, // RSA-2048
+        0x10002 | 0x10005 => 0x80,  // ECDSA
+        n => bail!("unknown ticket signature type {n:#x}"),
+    })
+}
+
+impl Ticket {
+    pub fn read(entry: &Entry) -> Result<Ticket> {
+        Self::read_inner(entry)
+            .with_context(|| format!("{}: {}", entry.source.display(), entry.name))
+    }
+
+    fn read_inner(entry: &Entry) -> Result<Ticket> {
+        let signature_type = read_range(entry, 0, 4, "ticket")?;
+        let body = ticket_body_offset(u32::from_le_bytes(
+            signature_type
+                .try_into()
+                .map_err(|_| anyhow!("internal: ticket read"))?,
+        ))?;
+        let raw = read_range(entry, body, 0x170, "ticket")?;
+        let mut ticket = Ticket {
+            rights_id: [0; 16],
+            key_type: raw[0x141],
+            titlekey: [0; 16],
+        };
+        ticket.titlekey.copy_from_slice(&raw[0x40..0x50]);
+        ticket.rights_id.copy_from_slice(&raw[0x160..0x170]);
+        Ok(ticket)
+    }
+
+    pub fn is_personalised(&self) -> bool {
+        self.key_type == 1
+    }
+}
+
 /// Decrypt the common titlekey in `ticket`. `master_index` comes from the NCA that uses it.
 pub fn titlekey_from_ticket(ticket: &Entry, master_index: u8, keys: &Keys) -> Result<[u8; 16]> {
+    let parsed = Ticket::read(ticket)?;
     let inner = || -> Result<[u8; 16]> {
-        let raw = read_range(ticket, 0, 0x190, "ticket")?;
-        match raw[0x141] {
+        match parsed.key_type {
             0 => {}
             1 => bail!("personalised tickets are not supported"),
             n => bail!("unknown ticket type {n}"),
         }
-        let mut key = [0u8; 16];
-        key.copy_from_slice(&raw[0x180..0x190]);
+        let mut key = parsed.titlekey;
         ecb_decrypt(&keys.titlekek(master_index)?, &mut key);
         Ok(key)
     };
@@ -109,7 +155,7 @@ pub fn read_range(entry: &Entry, offset: u64, len: u64, what: &str) -> Result<Ve
     let end = offset
         .checked_add(len)
         .filter(|&e| e <= entry.size)
-        .ok_or_else(|| anyhow!("truncated: {what} lies past the end of the NCA"))?;
+        .ok_or_else(|| anyhow!("truncated: {what} lies past the end of the file entry"))?;
     let abs = entry
         .offset
         .checked_add(offset)

@@ -168,12 +168,33 @@ fn build_cnmt(spec: &TitleSpec, records: &[([u8; 32], [u8; 16], u64, u8)]) -> Ve
     c
 }
 
-fn build_ticket(rights_id: [u8; 16]) -> Vec<u8> {
-    let mut t = vec![0u8; 0x2C0];
-    t[0x141] = 0;
-    t[0x180..0x190].copy_from_slice(&TICKET_TITLEKEY);
-    t[0x2A0..0x2B0].copy_from_slice(&rights_id);
+/// RSA-2048 with SHA-256, the signature type of eShop tickets.
+pub const RSA_2048_SHA256: u32 = 0x10004;
+/// Absolute offset of the key type byte in an RSA-2048 ticket.
+pub const TICKET_KEY_TYPE: usize = 0x140 + 0x141;
+pub const TICKET_ISSUER: &[u8] = b"Root-CA00000003-XS00000020";
+
+/// A ticket laid out as on real media: u32 signature type, signature and padding up to
+/// `body`, then issuer, titlekey block, key type and rights ID relative to `body`.
+pub fn signed_ticket(
+    signature_type: u32,
+    body: usize,
+    rights_id: [u8; 16],
+    key_type: u8,
+) -> Vec<u8> {
+    let mut t = vec![0u8; body + 0x180];
+    t[..4].copy_from_slice(&signature_type.to_le_bytes());
+    t[4..body].fill(0xEE);
+    t[body..body + TICKET_ISSUER.len()].copy_from_slice(TICKET_ISSUER);
+    t[body + 0x40..body + 0x50].copy_from_slice(&TICKET_TITLEKEY);
+    t[body + 0x140] = 2; // format version, as upstream's generated tickets
+    t[body + 0x141] = key_type;
+    t[body + 0x160..body + 0x170].copy_from_slice(&rights_id);
     t
+}
+
+fn build_ticket(rights_id: [u8; 16]) -> Vec<u8> {
+    signed_ticket(RSA_2048_SHA256, 0x140, rights_id, 0)
 }
 
 /// Files (name, bytes) a title contributes to an NSP or the secure partition.
