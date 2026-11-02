@@ -235,6 +235,17 @@ pub fn title_files_with(
     spec: &TitleSpec,
     extra: Option<[u8; 16]>,
 ) -> Vec<(String, Vec<u8>)> {
+    title_files_full(keys, spec, extra, None)
+}
+
+/// `shared` is an NCA (name, bytes) of another file, listed in this title's cnmt but not
+/// added to its files.
+fn title_files_full(
+    keys: &Keys,
+    spec: &TitleSpec,
+    extra: Option<[u8; 16]>,
+    shared: Option<&(String, Vec<u8>)>,
+) -> Vec<(String, Vec<u8>)> {
     let mut files = Vec::new();
     let mut records = Vec::new();
     let mut add_content =
@@ -261,6 +272,13 @@ pub fn title_files_with(
     }
     if extra.is_some() {
         add_content(&mut files, 3, 0xB2, extra);
+    }
+    if let Some((name, nca)) = shared {
+        let id: [u8; 16] = hex::decode(name.trim_end_matches(".nca"))
+            .unwrap()
+            .try_into()
+            .unwrap();
+        records.push((sha(nca), id, nca.len() as u64, 1));
     }
     let cnmt = build_cnmt(spec, &records);
     let cnmt_name = format!("{:?}_{:016x}.cnmt", spec.kind, spec.title_id);
@@ -298,6 +316,30 @@ fn load_keys(_path: &Path) -> Keys {
 pub fn build_nsp_two_rights(path: &Path, spec: &TitleSpec, extra: [u8; 16]) {
     let keys = load_keys(path);
     std::fs::write(path, concat(&title_files_with(&keys, spec, Some(extra)))).unwrap();
+}
+
+/// NSP holding `spec`, whose cnmt also lists `shared` (name, bytes) as content. Pair it with
+/// the file really holding `shared`: the NCA itself is added here too, as a repack would.
+pub fn build_nsp_sharing(path: &Path, spec: &TitleSpec, shared: (String, Vec<u8>)) {
+    let keys = load_keys(path);
+    let mut files = title_files_full(&keys, spec, None, Some(&shared));
+    files.push(shared);
+    std::fs::write(path, concat(&files)).unwrap();
+}
+
+/// Rewrite the NSP at `path` with `f` applied to each (name, bytes).
+pub fn repack_nsp(path: &Path, f: impl Fn(&str, &mut Vec<u8>)) {
+    let raw = std::fs::read(path).unwrap();
+    let files: Vec<(String, Vec<u8>)> = sak::container::open_entries(path)
+        .unwrap()
+        .into_iter()
+        .map(|e| {
+            let mut data = raw[e.offset as usize..(e.offset + e.size) as usize].to_vec();
+            f(&e.name, &mut data);
+            (e.name, data)
+        })
+        .collect();
+    std::fs::write(path, concat(&files)).unwrap();
 }
 
 pub fn build_nsp(path: &Path, specs: &[TitleSpec]) {

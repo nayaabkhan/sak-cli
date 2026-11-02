@@ -270,6 +270,17 @@ fn finish(cand: Candidate, keys: &Keys) -> Result<Title> {
                 )
             }
         })?;
+        // Only listed contents: a cnmt never lists the meta NCA holding it.
+        if nca.size != c.size {
+            bail!(
+                "NCA {} in {} is {} bytes but {} lists {} bytes",
+                c.nca_id,
+                cand.file.display(),
+                nca.size,
+                describe(&cand.cnmt),
+                c.size
+            );
+        }
         let header = NcaHeader::read(nca, keys)?;
         if header.rights_id != [0u8; 16] {
             let rid = hex::encode(header.rights_id);

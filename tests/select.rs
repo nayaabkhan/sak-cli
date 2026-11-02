@@ -211,6 +211,28 @@ fn missing_content_is_error_naming_nca() {
 }
 
 #[test]
+fn content_size_differing_from_cnmt_is_error_naming_nca_and_file() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("full.nsp");
+    build_nsp(&p, &[base()]);
+    let nca = sak::container::open_entries(&p)
+        .unwrap()
+        .into_iter()
+        .find(|e| !e.name.ends_with(".cnmt.nca"))
+        .unwrap();
+    let name = nca.name.clone();
+    common::repack_nsp(&p, |n, data| {
+        if n == name {
+            data.truncate(data.len() - 0x200);
+        }
+    });
+    let e = err(d.path());
+    assert!(e.contains(name.trim_end_matches(".nca")), "{e}");
+    assert!(e.contains("full.nsp"), "{e}");
+    assert!(e.contains(&nca.size.to_string()), "{e}");
+}
+
+#[test]
 fn compressed_input_says_not_supported_yet() {
     let d = tempfile::tempdir().unwrap();
     build_nsp(&d.path().join("a.nsp"), &[base()]);
