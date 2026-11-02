@@ -181,11 +181,10 @@ fn read_table(
         let name_off = le32(e, 16) as usize;
         let bytes = strings
             .get(name_off..)
+            .filter(|b| !b.is_empty())
             .ok_or_else(|| anyhow!("entry name offset is outside the string table"))?;
-        let end = bytes
-            .iter()
-            .position(|&b| b == 0)
-            .ok_or_else(|| anyhow!("unterminated entry name"))?;
+        // The last name may end with the table, as in upstream XCIs with no padding left.
+        let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         let name = std::str::from_utf8(&bytes[..end])
             .map_err(|_| anyhow!("corrupt file table: entry name is not valid UTF-8"))?
             .to_owned();

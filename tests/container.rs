@@ -234,3 +234,59 @@ fn build_nsp_leaves_keys_file_intact() {
     );
     assert_eq!(fs::read(&keys).unwrap(), before);
 }
+
+/// An XCI whose secure HFS0 is `secure`, with data after it.
+fn xci_with_secure(path: &std::path::Path, secure: &[u8], data: &[u8]) {
+    let root = hfs0_header(&[HfsFile {
+        name: "secure".into(),
+        size: (secure.len() + data.len()) as u64,
+        hash_size: secure.len() as u32,
+        hash: [0; 32],
+    }]);
+    let mut out = vec![0u8; 0xF000];
+    out[0x100..0x104].copy_from_slice(b"HEAD");
+    out.extend_from_slice(&root);
+    out.extend_from_slice(secure);
+    out.extend_from_slice(data);
+    fs::write(path, out).unwrap();
+}
+
+/// A one-file HFS0 header with a string table of exactly `name` and no terminator.
+fn hfs0_unterminated(name: &[u8], name_offset: u32, size: u64) -> Vec<u8> {
+    let mut h = b"HFS0".to_vec();
+    h.extend_from_slice(&1u32.to_le_bytes());
+    h.extend_from_slice(&(name.len() as u32).to_le_bytes());
+    h.extend_from_slice(&[0; 4]);
+    h.extend_from_slice(&0u64.to_le_bytes());
+    h.extend_from_slice(&size.to_le_bytes());
+    h.extend_from_slice(&name_offset.to_le_bytes());
+    h.extend_from_slice(&[0; 0x40 - 0x14]);
+    h.extend_from_slice(name);
+    h
+}
+
+#[test]
+fn name_ending_exactly_at_end_of_string_table_is_accepted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("exact.xci");
+    // Upstream pads to 0x200 and adds no terminator when the names already end there.
+    let name = vec![b'a'; 0x200 - 0x50];
+    let secure = hfs0_unterminated(&name, 0, 3);
+    assert_eq!(secure.len(), 0x200);
+    xci_with_secure(&path, &secure, b"xyz");
+    let es = open_entries(&path).unwrap();
+    assert_eq!(es.len(), 1);
+    assert_eq!(es[0].name.as_bytes(), name);
+    assert_eq!(read(&es[0]), b"xyz");
+}
+
+#[test]
+fn name_offset_at_end_of_string_table_is_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty.xci");
+    let name = vec![b'a'; 0x200 - 0x50];
+    let secure = hfs0_unterminated(&name, name.len() as u32, 0);
+    xci_with_secure(&path, &secure, b"");
+    let err = open_entries(&path).unwrap_err();
+    assert!(format!("{err:#}").contains("empty.xci"), "{err:#}");
+}
