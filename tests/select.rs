@@ -233,13 +233,25 @@ fn content_size_differing_from_cnmt_is_error_naming_nca_and_file() {
 }
 
 #[test]
-fn compressed_input_says_not_supported_yet() {
+fn compressed_input_is_skipped_and_reported() {
     let d = tempfile::tempdir().unwrap();
     build_nsp(&d.path().join("a.nsp"), &[base()]);
     fs::write(d.path().join("b.NSZ"), b"x").unwrap();
+    fs::write(d.path().join("c.xcz"), b"x").unwrap();
+    let p = plan(d.path()).unwrap();
+    assert_eq!(p.titles.len(), 1);
+    assert_eq!(p.skipped.len(), 2, "{:?}", p.skipped);
+    assert!(p.skipped[0].contains("b.NSZ"), "{:?}", p.skipped);
+    assert!(p.skipped[0].contains("compressed"), "{:?}", p.skipped);
+    assert!(p.skipped[1].contains("c.xcz"), "{:?}", p.skipped);
+}
+
+#[test]
+fn only_compressed_input_is_error_naming_compressed() {
+    let d = tempfile::tempdir().unwrap();
+    fs::write(d.path().join("b.nsz"), b"x").unwrap();
     let e = err(d.path());
-    assert!(e.contains("not supported yet"), "{e}");
-    assert!(e.contains("b.NSZ"), "{e}");
+    assert!(e.contains("compressed"), "{e}");
 }
 
 #[test]

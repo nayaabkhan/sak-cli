@@ -46,7 +46,8 @@ non-zero with a one-line reason on failure.
 
 1. **Scan** the current folder, not subfolders, for `.nsp` and `.xci`, ignoring
    case. The output file is excluded if it lands in the same folder. `.nsz` and
-   `.xcz` files cause a clear "not supported yet" error, not a silent skip.
+   `.xcz` files are left out and listed under "Skipped". If they are the only
+   files, sak stops with an error.
 2. **Identify** each content meta NCA (`*.cnmt.nca`): decrypt it, read the cnmt,
    and get title ID, version, type (Application, Patch, AddOnContent), the base
    title ID, and its content list. One file may hold several titles.

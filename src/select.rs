@@ -94,11 +94,13 @@ pub fn describe(c: &Cnmt) -> String {
     format!("{what} {:016x} version {}", c.title_id, c.version)
 }
 
-fn scan_files(dir: &Path, output: &Path) -> Result<Vec<PathBuf>> {
+/// Returns the mergeable files, then the compressed ones that were left out.
+fn scan_files(dir: &Path, output: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     let mut part = output.as_os_str().to_owned();
     part.push(OsString::from(".part"));
     let skip = [canon(output), canon(Path::new(&part))];
     let mut files = Vec::new();
+    let mut compressed = Vec::new();
     let rd =
         std::fs::read_dir(dir).with_context(|| format!("cannot read folder {}", dir.display()))?;
     for ent in rd {
@@ -120,26 +122,34 @@ fn scan_files(dir: &Path, output: &Path) -> Result<Vec<PathBuf>> {
         }
         match ext.as_deref() {
             Some("nsp" | "xci") => files.push(path),
-            Some("nsz" | "xcz") => {
-                bail!("compressed files are not supported yet: {}", path.display())
-            }
+            Some("nsz" | "xcz") => compressed.push(path),
             Some("ns0" | "xc0") => bail!("split files are not supported: {}", path.display()),
             _ => {}
         }
     }
     files.sort();
-    Ok(files)
+    compressed.sort();
+    Ok((files, compressed))
 }
 
 pub fn build_plan(dir: &Path, output: &Path, keys: &Keys) -> Result<MergePlan> {
-    let files = scan_files(dir, output)?;
+    let (files, compressed) = scan_files(dir, output)?;
     if files.is_empty() {
+        if !compressed.is_empty() {
+            bail!(
+                "only compressed .nsz or .xcz files found in {}, which sak cannot read",
+                dir.display()
+            );
+        }
         bail!("no .nsp or .xci files found in {}", dir.display());
     }
 
     // Highest version per title ID; ties go to the first file by sorted path.
     let mut chosen: BTreeMap<u64, Candidate> = BTreeMap::new();
-    let mut skipped = Vec::new();
+    let mut skipped: Vec<String> = compressed
+        .iter()
+        .map(|f| format!("{}: compressed, not merged", f.display()))
+        .collect();
     for file in &files {
         // Strict on purpose: an unreadable NCA or cnmt in any input stops the merge, so a
         // corrupt newest update can never be silently dropped. The errors already name

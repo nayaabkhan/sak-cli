@@ -10,7 +10,7 @@ Treat the output as unproven until you have tried it on your own setup.
 
 There is no published release yet. From a checkout:
 
-    cargo install --path .
+    cargo install --path . --locked
 
 ## Use
 
@@ -25,8 +25,9 @@ Put the game, update and DLC files in one folder, then run from that folder:
 | `--force` | Overwrite the output file if it exists. |
 
 Only `.nsp` and `.xci` files in the current folder are read, not subfolders.
-Exactly one base game is required; every update and DLC must belong to it. The
-highest version of each title is used.
+`.nsz` and `.xcz` files are left out and listed under "Skipped", so check that
+list if an update or DLC is compressed. Exactly one base game is required; every
+update and DLC must belong to it. The highest version of each title is used.
 
 ## Keys
 
@@ -55,7 +56,7 @@ sak prints this warning on every `.xci` run.
 
 ## Not supported
 
-- `.nsz` and `.xcz` input or output (sak stops with a "not supported yet" error)
+- `.nsz` and `.xcz` input or output
 - Personalised tickets in `.xci` output
 - NCA0 and NCA2, the older NCA formats
 - DataPatch content
