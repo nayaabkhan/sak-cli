@@ -51,26 +51,20 @@ pub fn test_keys_file(dir: &Path) -> PathBuf {
     path
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TitleKind {
-    Application,
-    Patch,
-    AddOnContent,
+pub use sak::cnmt::TitleKind;
+
+fn cnmt_type(kind: TitleKind) -> u8 {
+    match kind {
+        TitleKind::Application => 0x80,
+        TitleKind::Patch => 0x81,
+        TitleKind::AddOn => 0x82,
+    }
 }
 
-impl TitleKind {
-    fn cnmt_type(self) -> u8 {
-        match self {
-            TitleKind::Application => 0x80,
-            TitleKind::Patch => 0x81,
-            TitleKind::AddOnContent => 0x82,
-        }
-    }
-    fn ext_size(self) -> u16 {
-        match self {
-            TitleKind::Patch => 0x18,
-            _ => 0x10,
-        }
+fn ext_size(kind: TitleKind) -> u16 {
+    match kind {
+        TitleKind::Patch => 0x18,
+        _ => 0x10,
     }
 }
 
@@ -138,11 +132,11 @@ fn nca_id(nca: &[u8]) -> [u8; 16] {
 }
 
 fn build_cnmt(spec: &TitleSpec, records: &[([u8; 32], [u8; 16], u64, u8)]) -> Vec<u8> {
-    let ext = spec.kind.ext_size() as usize;
+    let ext = ext_size(spec.kind) as usize;
     let mut c = vec![0u8; 0x20 + ext];
     c[0..8].copy_from_slice(&spec.title_id.to_le_bytes());
     c[8..12].copy_from_slice(&spec.version.to_le_bytes());
-    c[0xC] = spec.kind.cnmt_type();
+    c[0xC] = cnmt_type(spec.kind);
     c[0xE..0x10].copy_from_slice(&(ext as u16).to_le_bytes());
     c[0x10..0x12].copy_from_slice(&(records.len() as u16).to_le_bytes());
     if spec.kind != TitleKind::Application {
