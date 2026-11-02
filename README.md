@@ -57,6 +57,9 @@ sak prints this warning on every `.xci` run.
 
 - `.nsz` and `.xcz` input or output (sak stops with a "not supported yet" error)
 - Personalised tickets in `.xci` output
+- NCA0 and NCA2, the older NCA formats
+- DataPatch content
+- Split files (`.ns0`, `.xc0`, or a folder named like an `.nsp` or `.xci`)
 - Several games in one run, or subfolders
 - FAT32 file splitting, title databases, renaming, firmware or keygen patching
 - Windows
