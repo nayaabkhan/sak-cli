@@ -16,4 +16,5 @@ xts-mode = "0.6.0"
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
+sha2 = "0.11.1"
 tempfile = "3.27.0"
