@@ -2,7 +2,8 @@ mod common;
 
 use assert_cmd::Command;
 use common::{
-    HEADER_KEY, TitleKind, TitleSpec, build_nsp, plain_titlekey, signed_ticket, test_keys_file,
+    HEADER_KEY, SECTION_KEY, TitleKind, TitleSpec, build_nsp, build_nsp_two_rights, master_index,
+    plain_titlekey, signed_ticket, test_keys_file,
 };
 use predicates::prelude::*;
 use sak::container::{Entry, open_entries};
@@ -18,6 +19,9 @@ const BASE: u64 = 0x0100_0000_0000_0000;
 const UPD: u64 = 0x0100_0000_0000_0800;
 const DLC: u64 = 0x0100_0000_0000_1001;
 const RIGHTS: [u8; 16] = [0x12; 16];
+/// Key generation of `spec` titles, and the master index it selects.
+const GEN: u8 = 3;
+const MASTER: u8 = 2;
 const XCI_KEY: [u8; 16] = [0x9c; 16];
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -29,6 +33,7 @@ fn spec(id: u64, kind: TitleKind, rights: Option<[u8; 16]>) -> TitleSpec {
         kind,
         rights_id: rights,
         delta: false,
+        key_gen: GEN,
     }
 }
 fn titlekey_base() -> TitleSpec {
@@ -135,8 +140,8 @@ fn titlekey_decrypts_with_titlekek() {
     let p = w.path("in.nsp");
     build_nsp(&p, &[titlekey_base()]);
     let entries = open_entries(&p).unwrap();
-    let key = titlekey_from_ticket(find(&entries, ".tik"), 0, &keys).unwrap();
-    assert_eq!(key, plain_titlekey(&keys));
+    let key = titlekey_from_ticket(find(&entries, ".tik"), MASTER, &keys).unwrap();
+    assert_eq!(key, plain_titlekey(&keys, RIGHTS, GEN));
 }
 
 /// Each signature type, in upstream's `TicketSignature`, with the offset of the ticket body.
@@ -167,10 +172,10 @@ fn ticket_fields_are_read_relative_to_signature_size() {
     let keys = w.keys();
     for (signature, body) in SIGNATURES {
         let ticket = ticket_entry(&w, &signed_ticket(signature, body, RIGHTS, 0));
-        let key = titlekey_from_ticket(&ticket, 0, &keys).unwrap();
-        assert_eq!(key, plain_titlekey(&keys), "{signature:#x}");
+        let key = titlekey_from_ticket(&ticket, MASTER, &keys).unwrap();
+        assert_eq!(key, plain_titlekey(&keys, RIGHTS, GEN), "{signature:#x}");
         let personal = ticket_entry(&w, &signed_ticket(signature, body, RIGHTS, 1));
-        let err = titlekey_from_ticket(&personal, 0, &keys).unwrap_err();
+        let err = titlekey_from_ticket(&personal, MASTER, &keys).unwrap_err();
         assert!(format!("{err:#}").contains("personal"), "{signature:#x}");
     }
 }
@@ -180,7 +185,10 @@ fn unknown_ticket_signature_type_is_error_naming_file() {
     let w = Work::new();
     let keys = w.keys();
     let ticket = ticket_entry(&w, &signed_ticket(0x20004, 0x140, RIGHTS, 0));
-    let msg = format!("{:#}", titlekey_from_ticket(&ticket, 0, &keys).unwrap_err());
+    let msg = format!(
+        "{:#}",
+        titlekey_from_ticket(&ticket, MASTER, &keys).unwrap_err()
+    );
     assert!(msg.contains("t.tik"), "{msg}");
     assert!(msg.contains("signature type"), "{msg}");
 }
@@ -191,7 +199,10 @@ fn truncated_ticket_is_error_naming_file() {
     let keys = w.keys();
     let whole = signed_ticket(0x10004, 0x140, RIGHTS, 0);
     let ticket = ticket_entry(&w, &whole[..0x200]);
-    let msg = format!("{:#}", titlekey_from_ticket(&ticket, 0, &keys).unwrap_err());
+    let msg = format!(
+        "{:#}",
+        titlekey_from_ticket(&ticket, MASTER, &keys).unwrap_err()
+    );
     assert!(msg.contains("t.tik"), "{msg}");
 }
 
@@ -211,7 +222,7 @@ fn personal_ticket_is_error() {
     build_nsp(&p, &[titlekey_base()]);
     make_personal(&p);
     let entries = open_entries(&p).unwrap();
-    let err = titlekey_from_ticket(find(&entries, ".tik"), 0, &keys).unwrap_err();
+    let err = titlekey_from_ticket(find(&entries, ".tik"), MASTER, &keys).unwrap_err();
     let msg = format!("{err:#}");
     assert!(msg.contains("personal"), "{msg}");
     assert!(msg.contains(".tik"), "{msg}");
@@ -260,7 +271,7 @@ fn rewritten_with(w: &Work, distribution: u8) -> (Entry, Vec<u8>, Vec<u8>) {
     let nca = content_nca(&entries).clone();
     set_distribution(&p, &nca, distribution);
     let header = NcaHeader::read(&nca, &keys).unwrap();
-    let tk = plain_titlekey(&keys);
+    let tk = plain_titlekey(&keys, RIGHTS, GEN);
     let new = standard_header(&header, Some(&tk), &keys).unwrap();
     let mut plain = new.to_vec();
     xts_decrypt(&HEADER_KEY, &mut plain, 0x200);
@@ -328,11 +339,11 @@ fn standard_header_key_area_opens_section_body() {
     let w = Work::new();
     let keys = w.keys();
     let (nca, _, plain) = rewritten(&w);
-    let kaek = keys.key_area_key(0, 0).unwrap();
+    let kaek = keys.key_area_key(MASTER, 0).unwrap();
     let mut area: [u8; 0x40] = plain[0x300..0x340].try_into().unwrap();
     ecb_decrypt(&kaek, &mut area);
     for slot in area.chunks_exact(16) {
-        assert_eq!(slot, plain_titlekey(&keys));
+        assert_eq!(slot, plain_titlekey(&keys, RIGHTS, GEN));
     }
     let key: [u8; 16] = area[0x20..0x30].try_into().unwrap();
     let mut high: [u8; 8] = plain[0x540..0x548].try_into().unwrap();
@@ -574,6 +585,85 @@ fn xci_output_reads_back_through_open_entries() {
         assert_eq!(header.rights_id, [0; 16], "{}", e.name);
         assert_eq!(header.plain[0x204], 0, "{}", e.name);
     }
+}
+
+/// Check one output NCA end to end: its header opens, its key area holds `want`, and that key
+/// turns its section back into `plain` at the fixture's section offset.
+fn assert_nca_opens(keys: &Keys, out: &Entry, master: u8, want: &[u8; 16], plain: &[u8]) {
+    let bytes = read_entry(out);
+    let mut header = bytes[..0xC00].to_vec();
+    xts_decrypt(&HEADER_KEY, &mut header, 0x200);
+    assert_eq!(&header[0x200..0x204], b"NCA3", "{}", out.name);
+    assert_eq!(header[0x230..0x240], [0; 16], "{}", out.name);
+    let mut area: [u8; 0x40] = header[0x300..0x340].try_into().unwrap();
+    ecb_decrypt(&keys.key_area_key(master, 0).unwrap(), &mut area);
+    assert_eq!(area[0x20..0x30], want[..], "key area of {}", out.name);
+    let mut high: [u8; 8] = header[0x540..0x548].try_into().unwrap();
+    high.reverse();
+    let mut body = bytes[0xC00..].to_vec();
+    ctr_apply(want, high, 0xC00, &mut body);
+    assert_eq!(
+        body[0x200..0x200 + plain.len()],
+        plain[..],
+        "section of {}",
+        out.name
+    );
+}
+
+#[test]
+fn every_output_nca_opens_with_its_own_key() {
+    const SECOND: [u8; 16] = [0x56; 16];
+    const UPDATE: [u8; 16] = [0x34; 16];
+    let w = Work::new();
+    let keys = w.keys();
+    let update = TitleSpec {
+        key_gen: 5,
+        ..spec(UPD, TitleKind::Patch, Some(UPDATE))
+    };
+    let dlc = TitleSpec {
+        key_gen: 4,
+        ..spec(DLC, TitleKind::AddOn, None)
+    };
+    build_nsp_two_rights(&w.path("base.nsp"), &titlekey_base(), SECOND);
+    build_nsp(&w.path("more.nsp"), &[update.clone(), dlc.clone()]);
+    w.merge("out.xci").assert().success();
+
+    let mut source = open_entries(&w.path("base.nsp")).unwrap();
+    source.extend(open_entries(&w.path("more.nsp")).unwrap());
+    let out = open_entries(&w.path("out.xci")).unwrap();
+    assert_eq!(out.len(), 7);
+    let mut titlekeys = Vec::new();
+    for e in &out {
+        let src = NcaHeader::read(find(&source, &e.name), &keys).unwrap();
+        let title = u64::from_le_bytes(src.plain[0x210..0x218].try_into().unwrap());
+        let key_gen = match title {
+            UPD => update.key_gen,
+            DLC => dlc.key_gen,
+            _ => GEN,
+        };
+        assert_eq!(src.master_index, master_index(key_gen), "{}", e.name);
+        let want = if src.rights_id == [0; 16] {
+            SECTION_KEY
+        } else {
+            let key = plain_titlekey(&keys, src.rights_id, key_gen);
+            titlekeys.push(key);
+            key
+        };
+        // The second rights ID belongs to the fixture's extra content, salted 0xB2.
+        let plain: Vec<u8> = if e.name.ends_with(".cnmt.nca") {
+            b"PFS0".to_vec()
+        } else {
+            let salt = if src.rights_id == SECOND { 0xB2 } else { 0xA1 };
+            let mut p = title.to_le_bytes().to_vec();
+            p.extend_from_slice(&0x10000u32.to_le_bytes());
+            p.resize(0x200, salt);
+            p
+        };
+        assert_nca_opens(&keys, e, src.master_index, &want, &plain);
+    }
+    titlekeys.sort();
+    titlekeys.dedup();
+    assert_eq!(titlekeys.len(), 3, "each rights ID has its own titlekey");
 }
 
 #[test]

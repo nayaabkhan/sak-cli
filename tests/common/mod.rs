@@ -26,7 +26,15 @@ const fn seq(seed: u8) -> [u8; 16] {
     }
     k
 }
-pub const MASTER_KEY_00: [u8; 16] = seq(0x21);
+/// Master keys held by `test_keys_file`, for key generations up to 6.
+pub const MASTER_KEYS: [[u8; 16]; 6] = [
+    seq(0x21),
+    seq(0x83),
+    seq(0x94),
+    seq(0xA5),
+    seq(0xB6),
+    seq(0xC7),
+];
 pub const AES_KEK_GEN_SOURCE: [u8; 16] = seq(0x32);
 pub const AES_KEY_GEN_SOURCE: [u8; 16] = seq(0x43);
 pub const KAEK_APP_SOURCE: [u8; 16] = seq(0x54);
@@ -34,29 +42,42 @@ pub const TITLEKEK_SOURCE: [u8; 16] = seq(0x65);
 /// Section CTR key placed (encrypted) in key area slot 2 of every fixture NCA.
 pub const SECTION_KEY: [u8; 16] = seq(0x76);
 
-/// Encrypted titlekey every fixture ticket carries.
-pub const TICKET_TITLEKEY: [u8; 16] = [0x5a; 16];
+/// Encrypted titlekey of the ticket for `rights_id`; each rights ID has its own.
+pub fn encrypted_titlekey(rights_id: [u8; 16]) -> [u8; 16] {
+    let mut k = seq(0x5a);
+    for (b, r) in k.iter_mut().zip(rights_id) {
+        *b ^= r;
+    }
+    k
+}
 
-/// Decrypted titlekey matching `TICKET_TITLEKEY`, using the titlekek for master index 0.
-pub fn plain_titlekey(keys: &Keys) -> [u8; 16] {
-    let mut k = TICKET_TITLEKEY;
-    ecb_decrypt(&keys.titlekek(0).unwrap(), &mut k);
+/// The master key index a key generation selects.
+pub fn master_index(key_gen: u8) -> u8 {
+    key_gen.saturating_sub(1)
+}
+
+/// Decrypted titlekey for `rights_id`, as used by an NCA of generation `key_gen`.
+pub fn plain_titlekey(keys: &Keys, rights_id: [u8; 16], key_gen: u8) -> [u8; 16] {
+    let mut k = encrypted_titlekey(rights_id);
+    ecb_decrypt(&keys.titlekek(master_index(key_gen)).unwrap(), &mut k);
     k
 }
 
 pub fn test_keys_file(dir: &Path) -> PathBuf {
     let path = dir.join("prod.keys");
-    let text = format!(
-        "header_key = {}\nmaster_key_00 = {}\naes_kek_generation_source = {}\n\
+    let mut text = format!(
+        "header_key = {}\naes_kek_generation_source = {}\n\
          aes_key_generation_source = {}\nkey_area_key_application_source = {}\n\
          titlekek_source = {}\n",
         hex::encode(HEADER_KEY),
-        hex::encode(MASTER_KEY_00),
         hex::encode(AES_KEK_GEN_SOURCE),
         hex::encode(AES_KEY_GEN_SOURCE),
         hex::encode(KAEK_APP_SOURCE),
         hex::encode(TITLEKEK_SOURCE),
     );
+    for (i, key) in MASTER_KEYS.iter().enumerate() {
+        text.push_str(&format!("master_key_{i:02x} = {}\n", hex::encode(key)));
+    }
     std::fs::write(&path, text).unwrap();
     path
 }
@@ -86,6 +107,8 @@ pub struct TitleSpec {
     pub kind: TitleKind,
     pub rights_id: Option<[u8; 16]>,
     pub delta: bool,
+    /// Key generation of every NCA of the title.
+    pub key_gen: u8,
 }
 
 fn sha(data: &[u8]) -> [u8; 32] {
@@ -100,6 +123,7 @@ fn build_nca(
     title_id: u64,
     is_meta: bool,
     rights_id: Option<[u8; 16]>,
+    key_gen: u8,
     section: &[u8],
     pfs0: bool,
 ) -> Vec<u8> {
@@ -111,13 +135,16 @@ fn build_nca(
     let mut h = vec![0u8; 0xC00];
     h[0x200..0x204].copy_from_slice(b"NCA3");
     h[0x205] = is_meta as u8;
+    // As on real NCAs: the old field stops at 2, the new one takes over from 3.
+    h[0x206] = key_gen.min(2);
+    h[0x220] = if key_gen > 2 { key_gen } else { 0 };
     h[0x208..0x210].copy_from_slice(&(total as u64).to_le_bytes());
     h[0x210..0x218].copy_from_slice(&title_id.to_le_bytes());
     h[0x230..0x240].copy_from_slice(&rights_id.unwrap_or([0; 16]));
     h[0x240..0x244].copy_from_slice(&((0xC00 / 0x200) as u32).to_le_bytes());
     h[0x244..0x248].copy_from_slice(&((total / 0x200) as u32).to_le_bytes());
-    // key area slot 2: section key, ECB-encrypted with key area key (master index 0)
-    let kaek = keys.key_area_key(0, 0).unwrap();
+    // key area slot 2: section key, ECB-encrypted with the key area key of this generation
+    let kaek = keys.key_area_key(master_index(key_gen), 0).unwrap();
     let mut slot = SECTION_KEY;
     ecb_encrypt(&kaek, &mut slot);
     h[0x320..0x330].copy_from_slice(&slot);
@@ -133,7 +160,7 @@ fn build_nca(
     let mut ctr_high = ctr_raw;
     ctr_high.reverse();
     let section_key = match rights_id {
-        Some(_) => plain_titlekey(keys),
+        Some(rights) => plain_titlekey(keys, rights, key_gen),
         None => SECTION_KEY,
     };
     ctr_apply(&section_key, ctr_high, 0xC00, &mut body);
@@ -186,7 +213,7 @@ pub fn signed_ticket(
     t[..4].copy_from_slice(&signature_type.to_le_bytes());
     t[4..body].fill(0xEE);
     t[body..body + TICKET_ISSUER.len()].copy_from_slice(TICKET_ISSUER);
-    t[body + 0x40..body + 0x50].copy_from_slice(&TICKET_TITLEKEY);
+    t[body + 0x40..body + 0x50].copy_from_slice(&encrypted_titlekey(rights_id));
     t[body + 0x140] = 2; // format version, as upstream's generated tickets
     t[body + 0x141] = key_type;
     t[body + 0x160..body + 0x170].copy_from_slice(&rights_id);
@@ -215,7 +242,15 @@ pub fn title_files_with(
             let mut payload = vec![salt; 0x200];
             payload[..8].copy_from_slice(&spec.title_id.to_le_bytes());
             payload[8..12].copy_from_slice(&spec.version.to_le_bytes());
-            let nca = build_nca(keys, spec.title_id, false, rights, &payload, false);
+            let nca = build_nca(
+                keys,
+                spec.title_id,
+                false,
+                rights,
+                spec.key_gen,
+                &payload,
+                false,
+            );
             let id = nca_id(&nca);
             records.push((sha(&nca), id, nca.len() as u64, ty));
             files.push((format!("{}.nca", hex::encode(id)), nca));
@@ -231,7 +266,7 @@ pub fn title_files_with(
     let cnmt_name = format!("{:?}_{:016x}.cnmt", spec.kind, spec.title_id);
     let mut pfs = pfs0_header(&[(cnmt_name.clone(), cnmt.len() as u64)]);
     pfs.extend_from_slice(&cnmt);
-    let meta = build_nca(keys, spec.title_id, true, None, &pfs, true);
+    let meta = build_nca(keys, spec.title_id, true, None, spec.key_gen, &pfs, true);
     files.push((format!("{}.cnmt.nca", hex::encode(nca_id(&meta))), meta));
     for r in spec.rights_id.into_iter().chain(extra) {
         files.push((format!("{}.tik", hex::encode(r)), build_ticket(r)));

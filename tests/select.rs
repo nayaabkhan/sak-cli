@@ -19,6 +19,7 @@ fn spec(id: u64, kind: TitleKind, version: u32) -> TitleSpec {
         kind,
         rights_id: None,
         delta: false,
+        key_gen: 3,
     }
 }
 fn base() -> TitleSpec {

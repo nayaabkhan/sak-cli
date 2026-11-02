@@ -25,6 +25,7 @@ fn spec(id: u64, kind: TitleKind) -> TitleSpec {
         kind,
         rights_id: None,
         delta: false,
+        key_gen: 3,
     }
 }
 

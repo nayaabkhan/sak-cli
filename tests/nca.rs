@@ -16,6 +16,7 @@ fn spec(id: u64, kind: TitleKind) -> TitleSpec {
         kind,
         rights_id: None,
         delta: false,
+        key_gen: 3,
     }
 }
 
@@ -55,7 +56,7 @@ fn reads_header_fields() {
     let (p, meta) = meta_nsp(dir.path(), &s);
     let h = NcaHeader::read(&meta, &keys).unwrap();
     assert_eq!(h.content_type, 1);
-    assert_eq!(h.master_index, 0);
+    assert_eq!(h.master_index, 2);
     assert_eq!(h.kaek_index, 0);
     assert_eq!(h.rights_id, [0; 16]);
     assert_eq!(&h.plain[0x200..0x204], b"NCA3");
