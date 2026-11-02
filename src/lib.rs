@@ -3,6 +3,7 @@ pub mod container;
 pub mod crypto;
 pub mod keys;
 pub mod nca;
+pub mod select;
 
 use anyhow::{Result, bail};
 use clap::Args;
