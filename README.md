@@ -3,7 +3,7 @@
 A small command line tool for macOS and Linux that merges a Nintendo Switch
 game, its update and its DLC into one file.
 
-Status: early. It has worked on one real game so far. Keep your original files
+Status: early. It has worked on a few real games so far. Keep your original files
 until you have tried the output on your own setup.
 
 ## Install
